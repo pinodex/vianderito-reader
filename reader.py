@@ -1,5 +1,15 @@
+from threading import Thread
+import threading
+
 import time
 import serial
+import requests
+
+import config
+
+headers = {
+  'Authorization': 'Bearer %s' % config.KIOSK_KEY
+}
 
 ser = serial.Serial(
   port = 'COM5',
@@ -10,35 +20,60 @@ ser = serial.Serial(
   timeout = 0.1
 )
 
-while 1:
-  raw_line = ser.readline()
+tags = []
 
-  if raw_line:
-    line = raw_line.encode('hex')
+def clear_epcs():
+  global tags
+  tags = []
+  
+  threading.Timer(5.0, clear_epcs).start()
 
-    head = line[:2]
-    lsb = line[2:4]
-    msb = line[4:6]
-    cid1 = line[6:8]
-    cid2 = line[8:10]
+def send_epcs():
+  url = '%s/cart' % config.BASE_URL
 
-    tag_count = int(line[10:12], 16)
-    tag_length = int(line[12:14], 16)
+  requests.post(url, json={ 'epcs': tags }, headers=headers)
+  threading.Timer(0.5, send_epcs).start()
 
-    data_start = 14
+def serial_read():
+  global tags
 
-    print 'Count: %s' % tag_count
+  while True:
+    raw_line = ser.readline()
 
-    for x in range(1, tag_count + 1):
-        antenna_number = line[data_start : data_start + 2]
+    if raw_line:
+      line = raw_line.encode('hex')
 
-        epc_start = data_start + 2
-        epc_end = (epc_start + (tag_length * 2)) - 4
+      head = line[:2]
+      lsb = line[2:4]
+      msb = line[4:6]
+      cid1 = line[6:8]
+      cid2 = line[8:10]
 
-        epc = line[epc_start:epc_end]
-        
-        data_start = epc_end + 2
+      tag_count = int(line[10:12], 16)
+      tag_length = int(line[12:14], 16)
 
-        print 'Tag %d: %s' % (x, epc)
+      data_start = 14
 
-    print '\n'
+      print 'Count: %s' % tag_count
+
+      tags = []
+
+      for x in range(1, tag_count + 1):
+          antenna_number = line[data_start : data_start + 2]
+
+          epc_start = data_start + 2
+          epc_end = (epc_start + (tag_length * 2)) - 4
+
+          epc = line[epc_start:epc_end]
+          
+          data_start = epc_end + 2
+
+          tags.append(epc)
+
+          print 'Tag %d: %s' % (x, epc)
+
+serial_read_thread = Thread(target=serial_read)
+serial_read_thread.start()
+
+clear_epcs()
+send_epcs()
